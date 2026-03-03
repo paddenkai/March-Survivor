@@ -639,16 +639,18 @@
 
 <!-- NAV -->
 <nav>
-  <div class="nav-logo">MARCH<span>SURVIVOR</span></div>
+  <div class="nav-logo" onclick="showPage('home')" style="cursor:pointer;">MARCH<span>SURVIVOR</span></div>
   <div class="nav-links" id="nav-links">
-    <button class="nav-btn ghost" onclick="showPage('leaderboard')">Leaderboard</button>
-    <div id="auth-nav">
+    <div id="auth-nav" style="display:flex;align-items:center;gap:8px;">
+      <button class="nav-btn ghost" onclick="showPage('leaderboard')">Leaderboard</button>
       <button class="nav-btn ghost" onclick="showPage('login')">Log In</button>
       <button class="nav-btn primary" onclick="showPage('register')">Join Pool</button>
     </div>
-    <div id="user-info" style="display:none">
-      <span id="username-display"></span>
+    <div id="user-info" style="display:none;align-items:center;gap:8px;">
+      <button class="nav-btn ghost" onclick="showPage('leaderboard')">Leaderboard</button>
       <button class="nav-btn ghost" onclick="showPage('dashboard')">My Picks</button>
+      <button class="nav-btn ghost" id="admin-nav-btn" onclick="showPage('admin')" style="display:none;">Admin</button>
+      <span id="username-display" style="color:var(--slate);font-size:14px;padding:0 4px;"></span>
       <button class="nav-btn danger" onclick="signOut()">Sign Out</button>
     </div>
   </div>
@@ -1051,6 +1053,12 @@ function updateNavForAuth(loggedIn, name = '') {
   document.getElementById('auth-nav').style.display = loggedIn ? 'none' : 'flex';
   document.getElementById('user-info').style.display = loggedIn ? 'flex' : 'none';
   document.getElementById('username-display').textContent = name;
+  // Show admin button if admin
+  const adminBtn = document.getElementById('admin-nav-btn');
+  if (adminBtn) {
+    const isAdmin = DEMO_MODE || (currentUser?.email === ADMIN_EMAIL) || currentProfile?.is_admin;
+    adminBtn.style.display = (loggedIn && isAdmin) ? 'inline-block' : 'none';
+  }
 }
 
 function hideLoading() {
