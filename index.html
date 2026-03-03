@@ -1331,32 +1331,32 @@ function renderRoundPicks() {
 
     const pointsForQ = pointsByQuadrant[q] || 0;
 
-    card.innerHTML = \`
+    card.innerHTML = `
       <div class="quadrant-header">
         <div class="quadrant-dot"></div>
-        <h3>\${q}</h3>
-        \${isElim ? '<span class="elim-badge">Eliminated</span>' : \`<span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;color:var(--green);">\${pointsForQ} pts</span>\`}
+        <h3>${q}</h3>
+        ${isElim ? '<span class="elim-badge">Eliminated</span>' : `<span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;color:var(--green);">${pointsForQ} pts</span>`}
       </div>
       <div class="quadrant-body">
-        <div class="current-pick-label">Round \${currentRound} Pick</div>
-        <div class="current-pick-team \${currentPick ? '' : 'empty'}">
-          \${currentPick || 'No pick yet'}
+        <div class="current-pick-label">Round ${currentRound} Pick</div>
+        <div class="current-pick-team ${currentPick ? '' : 'empty'}">
+          ${currentPick || 'No pick yet'}
         </div>
-        \${statusHtml}
-        \${!isElim && !isLocked && isCurrentRound ? \`
-          <select class="team-select" id="pick-select-\${q}">
+        ${statusHtml}
+        ${!isElim && !isLocked && isCurrentRound ? `
+          <select class="team-select" id="pick-select-${q}">
             <option value="">-- Select team --</option>
-            \${available.map(t => \`<option value="\${t}" \${t === currentPick ? 'selected' : ''}>\${t}</option>\`).join('')}
+            ${available.map(t => `<option value="${t}" ${t === currentPick ? 'selected' : ''}>${t}</option>`).join('')}
           </select>
-        \` : ''}
-        \${used.length > 0 ? \`
+        ` : ''}
+        ${used.length > 0 ? `
           <div class="used-teams">
             <span style="font-size:11px;color:var(--slate);text-transform:uppercase;letter-spacing:1px;">Used: </span>
-            \${used.map(t => \`<span class="used-team-tag">\${t}</span>\`).join('')}
+            ${used.map(t => `<span class="used-team-tag">${t}</span>`).join('')}
           </div>
-        \` : ''}
+        ` : ''}
       </div>
-    \`;
+    `;
     grid.appendChild(card);
   });
 }
