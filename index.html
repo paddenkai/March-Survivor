@@ -825,7 +825,22 @@
         </div>
       </div>
       <div class="admin-section">
-        <h3>Enter Game Result</h3>
+        <h3>Auto-Sync Results from ESPN</h3>
+        <p style="color:var(--slate);font-size:14px;margin-bottom:16px;">
+          Fetches completed NCAA tournament games from ESPN and imports results automatically. Review before saving.
+        </p>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+          <button class="small-btn orange" onclick="fetchESPNResults()">🏀 Fetch Latest Results</button>
+          <button class="small-btn green" id="sync-save-btn" onclick="saveESPNResults()" style="display:none;">✓ Save All to Database</button>
+          <span id="sync-status" style="font-size:13px;color:var(--slate);"></span>
+        </div>
+        <div id="espn-results-preview" style="display:none;">
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--slate);margin-bottom:10px;">PREVIEW — CLICK SAVE TO CONFIRM</div>
+          <div id="espn-results-list"></div>
+        </div>
+      </div>
+      <div class="admin-section">
+        <h3>Manual Entry</h3>
         <div class="result-form">
           <select id="admin-round" onchange="loadAdminTeams()">
             <option value="1">Round of 64</option>
@@ -851,7 +866,7 @@
         </div>
       </div>
       <div class="admin-section">
-        <h3>Recent Results</h3>
+        <h3>All Recorded Results</h3>
         <div id="results-list" style="color:var(--slate);font-size:14px;">No results yet.</div>
       </div>
     </div>
@@ -1623,6 +1638,232 @@ async function saveDeadlines() {
   if (error) { showToast('Error saving deadlines', true); return; }
   showToast('✓ Deadlines saved');
   await loadDeadlines();
+}
+
+// ══════════════════════════════════════════════
+// ESPN AUTO-SYNC
+// ══════════════════════════════════════════════
+
+// Map ESPN team names to our internal names
+// ESPN sometimes uses full school names or nicknames
+const ESPN_NAME_MAP = {
+  // Common mismatches — add more as needed
+  'Connecticut': 'UConn',
+  'UConn Huskies': 'UConn',
+  'North Carolina': 'UNC',
+  "Saint Mary's (CA)": "Saint Mary's",
+  'UC San Diego': 'UC San Diego',
+  'SIU Edwardsville': 'SIU Edwardsville',
+  'Saint Francis (PA)': 'SFPA',
+  'Sacramento State': 'Sac State',
+  'Mississippi': 'Ole Miss',
+  'Mississippi State': 'Mississippi State',
+  'Florida Atlantic': 'FAU',
+  'Texas A&M-Corpus Christi': 'TAMUCC',
+};
+
+// All our teams in a flat list for fuzzy matching
+function getAllTeams() {
+  return Object.values(TEAMS).flat();
+}
+
+// Normalize ESPN name to our internal name
+function normalizeTeamName(espnName) {
+  if (!espnName) return null;
+  // Direct map
+  if (ESPN_NAME_MAP[espnName]) return ESPN_NAME_MAP[espnName];
+  // Exact match
+  const all = getAllTeams();
+  if (all.includes(espnName)) return espnName;
+  // Fuzzy: ESPN name contains our name or vice versa
+  const lower = espnName.toLowerCase();
+  for (const t of all) {
+    if (lower.includes(t.toLowerCase()) || t.toLowerCase().includes(lower)) return t;
+  }
+  // Try just last word (e.g. "Duke Blue Devils" -> "Duke")
+  const words = espnName.split(' ');
+  if (words.length > 1) {
+    const firstWord = words[0];
+    for (const t of all) {
+      if (t.toLowerCase() === firstWord.toLowerCase()) return t;
+    }
+  }
+  return null; // couldn't match
+}
+
+// Map ESPN round description to our round number
+function espnRoundToNumber(roundName) {
+  if (!roundName) return null;
+  const r = roundName.toLowerCase();
+  if (r.includes('first round') || r.includes('round of 64')) return 1;
+  if (r.includes('second round') || r.includes('round of 32')) return 2;
+  if (r.includes('sweet') || r.includes('regional semifinal')) return 3;
+  if (r.includes('elite') || r.includes('regional final')) return 4;
+  if (r.includes('final four') || r.includes('national semifinal')) return 5;
+  if (r.includes('national championship') || r.includes('championship')) return 6;
+  return null;
+}
+
+// Which quadrant does a team belong to?
+function getTeamQuadrant(teamName) {
+  for (const [q, teams] of Object.entries(TEAMS)) {
+    if (teams.includes(teamName)) return q;
+  }
+  return null;
+}
+
+let pendingESPNResults = []; // results fetched but not yet saved
+
+async function fetchESPNResults() {
+  const statusEl = document.getElementById('sync-status');
+  const previewEl = document.getElementById('espn-results-preview');
+  const listEl = document.getElementById('espn-results-list');
+  const saveBtn = document.getElementById('sync-save-btn');
+
+  statusEl.textContent = '⏳ Fetching from ESPN...';
+  statusEl.style.color = 'var(--slate)';
+  previewEl.style.display = 'none';
+  saveBtn.style.display = 'none';
+  pendingESPNResults = [];
+
+  try {
+    // Use a CORS proxy since GitHub Pages can't hit ESPN directly
+    const ESPN_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?groups=100&limit=100';
+    const PROXY = 'https://corsproxy.io/?' + encodeURIComponent(ESPN_URL);
+
+    const resp = await fetch(PROXY);
+    if (!resp.ok) throw new Error('ESPN fetch failed: ' + resp.status);
+    const data = await resp.json();
+
+    const events = data.events || [];
+    if (!events.length) {
+      statusEl.textContent = 'No games found. Try during or after tournament games.';
+      return;
+    }
+
+    // Load already-recorded results to avoid duplicates
+    let existingResults = [];
+    if (!DEMO_MODE) {
+      const { data: existing } = await sb.from('results').select('round,quadrant,loser');
+      existingResults = existing || [];
+    }
+
+    const newResults = [];
+    const skipped = [];
+    const unmatched = [];
+
+    for (const event of events) {
+      const competition = event.competitions?.[0];
+      if (!competition) continue;
+
+      // Only process completed games
+      const status = competition.status?.type?.completed;
+      if (!status) continue;
+
+      const roundName = event.season?.slug || competition.notes?.[0]?.headline || '';
+      const roundNum = espnRoundToNumber(roundName);
+
+      const competitors = competition.competitors || [];
+      if (competitors.length !== 2) continue;
+
+      const [c1, c2] = competitors;
+      const score1 = parseInt(c1.score || 0);
+      const score2 = parseInt(c2.score || 0);
+
+      const winnerESPN = score1 > score2 ? c1.team.displayName : c2.team.displayName;
+      const loserESPN = score1 > score2 ? c2.team.displayName : c1.team.displayName;
+
+      const winner = normalizeTeamName(winnerESPN);
+      const loser = normalizeTeamName(loserESPN);
+
+      if (!winner || !loser) {
+        unmatched.push(winnerESPN + ' def. ' + loserESPN);
+        continue;
+      }
+
+      const quadrant = getTeamQuadrant(loser) || getTeamQuadrant(winner);
+      if (!quadrant) { unmatched.push(winner + ' / ' + loser + ' (no quadrant)'); continue; }
+
+      const round = roundNum || activeRound;
+
+      // Skip if already recorded
+      const alreadyExists = existingResults.some(r => r.round === round && r.quadrant === quadrant && r.loser === loser);
+      if (alreadyExists) { skipped.push(winner + ' def. ' + loser); continue; }
+
+      newResults.push({ round, quadrant, winner, loser });
+    }
+
+    pendingESPNResults = newResults;
+
+    if (newResults.length === 0 && skipped.length === 0) {
+      statusEl.textContent = unmatched.length
+        ? `Found ${unmatched.length} games but couldn't match team names. Check team name mapping.`
+        : 'No new completed tournament games found.';
+      return;
+    }
+
+    statusEl.textContent = `Found ${newResults.length} new result${newResults.length !== 1 ? 's' : ''}.${skipped.length ? ' ' + skipped.length + ' already recorded.' : ''}`;
+    statusEl.style.color = 'var(--green)';
+
+    if (newResults.length > 0) {
+      previewEl.style.display = 'block';
+      saveBtn.style.display = 'inline-block';
+      listEl.innerHTML = `
+        <table class="player-table">
+          <thead><tr><th>Round</th><th>Quadrant</th><th>Winner</th><th>Loser</th></tr></thead>
+          <tbody>
+            ${newResults.map(r => `
+              <tr>
+                <td>${ROUNDS[r.round-1]?.name || 'R'+r.round}</td>
+                <td>${r.quadrant}</td>
+                <td style="color:var(--green);font-weight:600">${r.winner}</td>
+                <td style="color:var(--red);font-weight:600">${r.loser}</td>
+              </tr>
+            `).join('')}
+            ${unmatched.length ? `<tr><td colspan="4" style="color:var(--slate);font-size:12px;padding-top:8px;">⚠️ Unmatched: ${unmatched.join(', ')}</td></tr>` : ''}
+          </tbody>
+        </table>
+      `;
+    }
+
+  } catch (err) {
+    statusEl.textContent = '✗ Error: ' + err.message;
+    statusEl.style.color = 'var(--red)';
+    console.error('ESPN sync error:', err);
+  }
+}
+
+async function saveESPNResults() {
+  if (!pendingESPNResults.length) return;
+  const saveBtn = document.getElementById('sync-save-btn');
+  const statusEl = document.getElementById('sync-status');
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  if (DEMO_MODE) {
+    pendingESPNResults.forEach(r => demoData.results.push(r));
+    showToast('✓ ' + pendingESPNResults.length + ' results saved (demo)');
+    pendingESPNResults = [];
+    saveBtn.style.display = 'none';
+    document.getElementById('espn-results-preview').style.display = 'none';
+    statusEl.textContent = 'Saved!';
+    loadRecentResults();
+    return;
+  }
+
+  const { error } = await sb.from('results').upsert(pendingESPNResults, { onConflict: 'round,quadrant,loser' });
+  saveBtn.disabled = false;
+  saveBtn.textContent = '✓ Save All to Database';
+
+  if (error) { showToast('Error saving: ' + error.message, true); return; }
+
+  showToast('✓ ' + pendingESPNResults.length + ' results saved!');
+  pendingESPNResults = [];
+  saveBtn.style.display = 'none';
+  document.getElementById('espn-results-preview').style.display = 'none';
+  statusEl.textContent = 'All saved ✓';
+  loadRecentResults();
 }
 
 // ══════════════════════════════════════════════
