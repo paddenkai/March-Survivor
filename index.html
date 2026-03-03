@@ -162,8 +162,11 @@
 
   .rules-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
+  }
+  @media (max-width: 700px) {
+    .rules-grid { grid-template-columns: 1fr; }
   }
 
   .rule-card {
@@ -428,7 +431,7 @@
 
   .lb-row {
     display: grid;
-    grid-template-columns: 48px 1fr 120px 80px;
+    grid-template-columns: 48px 1fr 80px 100px 80px;
     align-items: center;
     padding: 14px 20px;
     border-bottom: 1px solid rgba(136,146,164,0.08);
@@ -690,17 +693,17 @@
       <div class="rule-card">
         <div class="icon">💀</div>
         <h3>Quadrant Elimination</h3>
-        <p>Your pick loses? You're locked out of that quadrant permanently. Stay alive in at least one.</p>
+        <p>Wrong pick = eliminated from that quadrant. You still earn points in your other quadrants.</p>
       </div>
       <div class="rule-card">
-        <div class="icon">🔄</div>
-        <h3>Elite 8 Resets</h3>
-        <p>Starting in the Elite 8, reuse rules are lifted — only 8 teams remain anyway.</p>
+        <div class="icon">🔢</div>
+        <h3>Points Win</h3>
+        <p>Every correct pick = +1 point. Most points at the end of the tournament wins the pot.</p>
       </div>
       <div class="rule-card">
         <div class="icon">🏆</div>
         <h3>Last Alive Wins</h3>
-        <p>Last person with any active quadrant takes the pot. Ties split the prize.</p>
+        <p>Most total points wins the pot. Tiebreaker: most quadrants still alive. Still tied? Split it.</p>
       </div>
       <div class="rule-card">
         <div class="icon">💸</div>
@@ -793,7 +796,7 @@
     <p class="lb-subtitle">Live standings — updated after each round</p>
     <div class="lb-table" id="lb-table">
       <div class="lb-row header">
-        <span>#</span><span>Player</span><span>Quadrants</span><span>Status</span>
+        <span>#</span><span>Player</span><span>Points</span><span>Quadrants</span><span>Status</span>
       </div>
       <div style="padding:40px;text-align:center;color:var(--slate);">Loading standings...</div>
     </div>
@@ -813,6 +816,14 @@
 
     <!-- Results Tab -->
     <div class="admin-panel active" id="admin-results">
+      <div class="admin-section">
+        <h3>Pool Controls</h3>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <button class="small-btn orange" onclick="advanceRound()">⏭ Advance to Next Round</button>
+          <button class="small-btn red" id="lock-pool-btn" onclick="togglePoolLock()">🔒 Lock Pool (Close Registration)</button>
+          <span id="pool-lock-status" style="font-size:13px;color:var(--slate);"></span>
+        </div>
+      </div>
       <div class="admin-section">
         <h3>Enter Game Result</h3>
         <div class="result-form">
@@ -936,12 +947,27 @@ const demoData = {
     { user_id: 'u2', round: 1, quadrant: 'West', team: 'St. John\'s' },
     { user_id: 'u2', round: 1, quadrant: 'South', team: 'Tennessee' },
     { user_id: 'u2', round: 1, quadrant: 'Midwest', team: 'Wisconsin' },
+    { user_id: 'u3', round: 1, quadrant: 'East', team: 'Duke' },
+    { user_id: 'u3', round: 1, quadrant: 'West', team: 'Florida' },
+    { user_id: 'u3', round: 1, quadrant: 'South', team: 'Houston' },
+    { user_id: 'u3', round: 1, quadrant: 'Midwest', team: 'Wisconsin' },
+    { user_id: 'u4', round: 1, quadrant: 'East', team: 'Iowa State' },
+    { user_id: 'u4', round: 1, quadrant: 'West', team: 'Texas Tech' },
+    { user_id: 'u4', round: 1, quadrant: 'South', team: 'Kentucky' },
+    { user_id: 'u4', round: 1, quadrant: 'Midwest', team: 'Baylor' },
+    { user_id: 'u5', round: 1, quadrant: 'East', team: 'Duke' },
+    { user_id: 'u5', round: 1, quadrant: 'West', team: 'Florida' },
+    { user_id: 'u5', round: 1, quadrant: 'South', team: 'Tennessee' },
+    { user_id: 'u5', round: 1, quadrant: 'Midwest', team: 'Kansas' },
     { user_id: 'demo-user', round: 1, quadrant: 'East', team: 'Duke' },
     { user_id: 'demo-user', round: 1, quadrant: 'West', team: 'Florida' },
+    { user_id: 'demo-user', round: 1, quadrant: 'South', team: 'Houston' },
+    { user_id: 'demo-user', round: 1, quadrant: 'Midwest', team: 'Kansas' },
   ],
   results: [
     { round: 1, quadrant: 'East', winner: 'Duke', loser: 'American' },
     { round: 1, quadrant: 'West', winner: 'Florida', loser: 'Omaha' },
+    { round: 1, quadrant: 'South', winner: 'Houston', loser: 'SIU Edwardsville' },
   ],
   settings: [{ key: 'active_round', value: '1' }],
 };
@@ -956,8 +982,6 @@ const ROUNDS = [
   { id: 5, name: 'Final Four' },
   { id: 6, name: 'Championship' },
 ];
-const REUSE_ALLOWED_FROM_ROUND = 4; // Elite 8
-
 // All 68 teams by quadrant (seed: team)
 const TEAMS = {
   East: [
@@ -986,7 +1010,11 @@ let activeRound = 1; // the actual live round
 let userPicks = {}; // { roundId: { quadrant: teamName } }
 let usedTeams = {}; // { quadrant: [teamName, ...] }
 let eliminatedQuadrants = []; // quadrants this user is out of
+let userPoints = 0; // total correct picks
+let pointsByQuadrant = { East: 0, West: 0, South: 0, Midwest: 0 };
+let pickResults = {}; // { 'round-quadrant': 'win'|'loss'|'pending' }
 let deadlines = {};
+let poolLocked = false;
 
 // ══════════════════════════════════════════════
 // INIT
@@ -997,9 +1025,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (DEMO_MODE) {
     // Preview mode: simulate a logged-in user
     currentUser = { id: 'demo-user', email: 'demo@example.com' };
-    currentProfile = { id: 'demo-user', display_name: 'Demo Player', email: 'demo@example.com', paid: false };
+    currentProfile = { id: 'demo-user', display_name: 'Demo Player', email: 'demo@example.com', paid: false, is_admin: true };
     updateNavForAuth(true, 'Demo Player');
     await loadUserData();
+    updatePoolLockUI();
     hideLoading();
     // Show a demo banner
     showDemoBanner();
@@ -1157,6 +1186,9 @@ async function loadUserData() {
   userPicks = {};
   usedTeams = { East: [], West: [], South: [], Midwest: [] };
   eliminatedQuadrants = [];
+  userPoints = 0;
+  pointsByQuadrant = { East: 0, West: 0, South: 0, Midwest: 0 };
+  pickResults = {}; // { 'round-quadrant': 'win'|'loss'|'pending' }
 
   if (picks) {
     picks.forEach(p => {
@@ -1167,13 +1199,29 @@ async function loadUserData() {
     });
   }
 
-  if (results) {
+  if (results && picks) {
     results.forEach(r => {
       const pick = userPicks[r.round]?.[r.quadrant];
-      if (pick && pick === r.loser && !eliminatedQuadrants.includes(r.quadrant)) {
-        eliminatedQuadrants.push(r.quadrant);
+      if (!pick) return;
+      const key = r.round + '-' + r.quadrant;
+      if (pick === r.winner) {
+        pickResults[key] = 'win';
+        userPoints++;
+        pointsByQuadrant[r.quadrant]++;
+      } else if (pick === r.loser) {
+        pickResults[key] = 'loss';
+        if (!eliminatedQuadrants.includes(r.quadrant)) {
+          eliminatedQuadrants.push(r.quadrant);
+        }
       }
     });
+    // Mark pending picks (pick exists but no result yet)
+    if (picks) {
+      picks.forEach(p => {
+        const key = p.round + '-' + p.quadrant;
+        if (!pickResults[key]) pickResults[key] = 'pending';
+      });
+    }
   }
 
   const activeSetting = (settings || []).find(s => s.key === 'active_round');
@@ -1228,54 +1276,87 @@ function renderRoundPicks() {
   const grid = document.getElementById('picks-grid');
   grid.innerHTML = '';
 
-  const isLocked = isRoundLocked(currentRound);
+  const isLocked = isRoundLocked(currentRound) || poolLocked;
   const saveNote = document.getElementById('save-note');
-  saveNote.textContent = isLocked ? '🔒 Picks are locked for this round.' : '';
-  document.getElementById('save-btn').disabled = isLocked;
+  const isCurrentRound = currentRound === activeRound;
+  saveNote.textContent = poolLocked ? '🔒 Pool is locked — registration closed.' :
+    isLocked ? '🔒 Picks are locked for this round.' :
+    !isCurrentRound ? '📋 Viewing past picks (read only).' : '';
+  document.getElementById('save-btn').disabled = isLocked || !isCurrentRound;
+  document.getElementById('save-btn').style.display = isCurrentRound ? 'inline-block' : 'none';
+
+  // Points summary bar
+  const existingSummary = document.getElementById('points-summary');
+  if (existingSummary) existingSummary.remove();
+  const summary = document.createElement('div');
+  summary.id = 'points-summary';
+  summary.style.cssText = 'display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;';
+  summary.innerHTML = `
+    <div style="background:rgba(0,200,117,0.1);border:1px solid rgba(0,200,117,0.25);border-radius:8px;padding:10px 18px;display:flex;align-items:center;gap:8px;">
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:var(--green);">${userPoints}</span>
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--slate);">Total Points</span>
+    </div>
+    <div style="background:rgba(255,59,92,0.08);border:1px solid rgba(255,59,92,0.2);border-radius:8px;padding:10px 18px;display:flex;align-items:center;gap:8px;">
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:var(--red);">${eliminatedQuadrants.length}</span>
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--slate);">Quadrants Lost</span>
+    </div>
+    <div style="background:rgba(255,107,0,0.08);border:1px solid rgba(255,107,0,0.2);border-radius:8px;padding:10px 18px;display:flex;align-items:center;gap:8px;">
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:28px;color:var(--orange);">${4 - eliminatedQuadrants.length}</span>
+      <span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--slate);">Still Alive</span>
+    </div>
+  `;
+  grid.parentNode.insertBefore(summary, grid);
 
   QUADRANTS.forEach(q => {
     const isElim = eliminatedQuadrants.includes(q);
     const currentPick = userPicks[currentRound]?.[q] || '';
-    const allowReuse = currentRound >= REUSE_ALLOWED_FROM_ROUND;
+    const resultKey = currentRound + '-' + q;
+    const pickResult = pickResults[resultKey]; // 'win', 'loss', 'pending', undefined
 
-    // Available teams for this quadrant
+    // Available teams — NO reuse ever
     const allTeams = TEAMS[q] || [];
     const used = usedTeams[q] || [];
-    const available = allTeams.filter(t => allowReuse || !used.includes(t) || t === currentPick);
+    const available = allTeams.filter(t => !used.includes(t) || t === currentPick);
 
     const card = document.createElement('div');
     card.className = `quadrant-card q-${q.toLowerCase()} ${isElim ? 'eliminated' : ''}`;
 
-    // Check result for current pick
-    let statusHtml = '';
-    // We'd query this from results in a real app
+    const statusHtml = pickResult === 'win'
+      ? `<div class="pick-status win">✓ +1 Point — Correct Pick</div>`
+      : pickResult === 'loss'
+      ? `<div class="pick-status loss">✗ Wrong — Eliminated from ${q}</div>`
+      : currentPick
+      ? `<div class="pick-status pending">⏳ Awaiting result</div>`
+      : '';
 
-    card.innerHTML = `
+    const pointsForQ = pointsByQuadrant[q] || 0;
+
+    card.innerHTML = \`
       <div class="quadrant-header">
         <div class="quadrant-dot"></div>
-        <h3>${q}</h3>
-        ${isElim ? '<span class="elim-badge">Eliminated</span>' : ''}
+        <h3>\${q}</h3>
+        \${isElim ? '<span class="elim-badge">Eliminated</span>' : \`<span style="font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:13px;color:var(--green);">\${pointsForQ} pts</span>\`}
       </div>
       <div class="quadrant-body">
-        <div class="current-pick-label">Round ${currentRound} Pick</div>
-        <div class="current-pick-team ${currentPick ? '' : 'empty'}" id="pick-display-${q}">
-          ${currentPick || 'No pick yet'}
+        <div class="current-pick-label">Round \${currentRound} Pick</div>
+        <div class="current-pick-team \${currentPick ? '' : 'empty'}">
+          \${currentPick || 'No pick yet'}
         </div>
-        ${!isElim && !isLocked ? `
-          <select class="team-select" id="pick-select-${q}" ${isElim ? 'disabled' : ''}>
+        \${statusHtml}
+        \${!isElim && !isLocked && isCurrentRound ? \`
+          <select class="team-select" id="pick-select-\${q}">
             <option value="">-- Select team --</option>
-            ${available.map(t => `<option value="${t}" ${t === currentPick ? 'selected' : ''}>${t}</option>`).join('')}
+            \${available.map(t => \`<option value="\${t}" \${t === currentPick ? 'selected' : ''}>\${t}</option>\`).join('')}
           </select>
-        ` : ''}
-        ${used.filter(t => t !== currentPick).length > 0 && !allowReuse ? `
+        \` : ''}
+        \${used.length > 0 ? \`
           <div class="used-teams">
             <span style="font-size:11px;color:var(--slate);text-transform:uppercase;letter-spacing:1px;">Used: </span>
-            ${used.map(t => `<span class="used-team-tag">${t}</span>`).join('')}
+            \${used.map(t => \`<span class="used-team-tag">\${t}</span>\`).join('')}
           </div>
-        ` : ''}
-        ${allowReuse ? '<div style="font-size:11px;color:var(--orange);margin-top:8px;">⚡ Elite 8: reuse allowed</div>' : ''}
+        \` : ''}
       </div>
-    `;
+    \`;
     grid.appendChild(card);
   });
 }
@@ -1352,27 +1433,29 @@ async function loadLeaderboard() {
 
   if (!profiles) return;
 
-  // Build standings
+  // Build standings with points
   const standings = profiles.map(p => {
     const myPicks = picks?.filter(pk => pk.user_id === p.id) || [];
     const elim = [];
+    let pts = 0;
 
     (results || []).forEach(r => {
       const pick = myPicks.find(pk => pk.round === r.round && pk.quadrant === r.quadrant);
-      if (pick && pick.team === r.loser && !elim.includes(r.quadrant)) {
-        elim.push(r.quadrant);
-      }
+      if (!pick) return;
+      if (pick.team === r.winner) pts++;
+      else if (pick.team === r.loser && !elim.includes(r.quadrant)) elim.push(r.quadrant);
     });
 
     const alive = QUADRANTS.filter(q => !elim.includes(q)).length;
-    return { ...p, elim, alive, isOut: alive === 0 };
+    return { ...p, elim, alive, pts, isOut: alive === 0 };
   });
 
-  standings.sort((a, b) => b.alive - a.alive || (a.isOut ? 1 : -1));
+  // Sort by points, tiebreak by quadrants alive
+  standings.sort((a, b) => b.pts - a.pts || b.alive - a.alive);
 
   table.innerHTML = `
     <div class="lb-row header">
-      <span>#</span><span>Player</span><span>Quadrants</span><span>Status</span>
+      <span>#</span><span>Player</span><span>Points</span><span>Quadrants</span><span>Status</span>
     </div>
     ${standings.map((s, i) => {
       const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
@@ -1384,6 +1467,7 @@ async function loadLeaderboard() {
             ${s.display_name || s.email}
             ${isMe ? '<span class="you-tag">You</span>' : ''}
           </div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-weight:900;font-size:22px;color:var(--green);">${s.pts}</div>
           <div class="lb-quadrants">
             ${QUADRANTS.map(q => `
               <div class="lb-q ${s.elim.includes(q) ? 'dead' : 'alive'}" title="${q}">
@@ -1507,10 +1591,13 @@ async function togglePayment(userId, currentPaid) {
 // ── Deadlines ──
 async function loadDeadlines() {
   if (DEMO_MODE) return;
-  const { data } = await sb.from('settings').select('*').like('key', 'deadline_%');
+  const { data } = await sb.from('settings').select('*');
   if (data) data.forEach(s => {
-    const round = s.key.replace('deadline_', '');
-    deadlines[round] = s.value;
+    if (s.key.startsWith('deadline_')) {
+      const round = s.key.replace('deadline_', '');
+      deadlines[round] = s.value;
+    }
+    if (s.key === 'pool_locked') poolLocked = s.value === 'true';
   });
 }
 
@@ -1536,6 +1623,42 @@ async function saveDeadlines() {
   if (error) { showToast('Error saving deadlines', true); return; }
   showToast('✓ Deadlines saved');
   await loadDeadlines();
+}
+
+// ══════════════════════════════════════════════
+// POOL CONTROLS
+// ══════════════════════════════════════════════
+async function advanceRound() {
+  const next = activeRound + 1;
+  if (next > 6) { showToast('Already at final round', true); return; }
+  if (!confirm('Advance pool to ' + ROUNDS[next-1].name + '?')) return;
+  if (DEMO_MODE) { activeRound = next; currentRound = next; showToast('Advanced to ' + ROUNDS[next-1].name); renderDashboard(); return; }
+  const { error } = await sb.from('settings').upsert({ key: 'active_round', value: String(next) }, { onConflict: 'key' });
+  if (error) { showToast('Error: ' + error.message, true); return; }
+  activeRound = next; currentRound = next;
+  showToast('✓ Advanced to ' + ROUNDS[next-1].name);
+  renderDashboard();
+}
+
+async function togglePoolLock() {
+  const newVal = !poolLocked;
+  if (!confirm((newVal ? 'Lock' : 'Unlock') + ' the pool?')) return;
+  if (DEMO_MODE) { poolLocked = newVal; updatePoolLockUI(); showToast(newVal ? '🔒 Pool locked' : '🔓 Pool unlocked'); return; }
+  const { error } = await sb.from('settings').upsert({ key: 'pool_locked', value: String(newVal) }, { onConflict: 'key' });
+  if (error) { showToast('Error: ' + error.message, true); return; }
+  poolLocked = newVal;
+  updatePoolLockUI();
+  showToast(newVal ? '🔒 Pool locked — registration closed' : '🔓 Pool unlocked');
+}
+
+function updatePoolLockUI() {
+  const btn = document.getElementById('lock-pool-btn');
+  const status = document.getElementById('pool-lock-status');
+  if (btn) {
+    btn.textContent = poolLocked ? '🔓 Unlock Pool' : '🔒 Lock Pool (Close Registration)';
+    btn.className = 'small-btn ' + (poolLocked ? 'green' : 'red');
+  }
+  if (status) status.textContent = poolLocked ? 'Pool is LOCKED — no new registrations' : 'Pool is open';
 }
 
 // ══════════════════════════════════════════════
